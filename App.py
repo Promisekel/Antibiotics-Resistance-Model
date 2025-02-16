@@ -25,9 +25,12 @@ if uploaded_file is not None:
         file_content = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
         sequences = []
         labels = []
-        for record in SeqIO.parse(file_content, "fasta"):
+        file_format = "fastq" if uploaded_file.name.endswith(".fastq") else "fasta"
+        
+        for record in SeqIO.parse(file_content, file_format):
             sequences.append(str(record.seq))
             labels.append(1 if "resistant" in record.description.lower() else 0)
+        
         DataDf = pd.DataFrame({"genes": sequences, "resistant": labels})
     
     st.write("### Preview of Uploaded Data:")
