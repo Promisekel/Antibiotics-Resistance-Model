@@ -7,6 +7,7 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
 from Bio import SeqIO
+import io
 
 # App title
 st.title("Antibiotic Resistance Prediction")
@@ -21,9 +22,10 @@ if uploaded_file is not None:
         Datadict = DataRaw[()]
         DataDf = pd.DataFrame.from_dict(Datadict)
     else:
+        file_content = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
         sequences = []
         labels = []
-        for record in SeqIO.parse(uploaded_file, "fasta"):
+        for record in SeqIO.parse(file_content, "fasta"):
             sequences.append(str(record.seq))
             labels.append(1 if "resistant" in record.description.lower() else 0)
         DataDf = pd.DataFrame({"genes": sequences, "resistant": labels})
