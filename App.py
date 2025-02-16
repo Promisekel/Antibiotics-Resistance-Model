@@ -2,29 +2,38 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from tensorflow.keras.preprocessing.text import Tokenizer
-from tensorflow.keras.preprocessing.sequence import pad_sequences
+from keras.preprocessing.text import Tokenizer
+from keras.preprocessing.sequence import pad_sequences
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
+from Bio import SeqIO
 
 # App title
 st.title("Antibiotic Resistance Prediction")
 st.markdown("## Predict antibiotic resistance from genomic sequences")
 
 # Upload dataset
-uploaded_file = st.file_uploader("Upload dataset (.npy file)", type=["npy"])
+uploaded_file = st.file_uploader("Upload dataset (.fasta, .fastq, or .npy file)", type=["fasta", "fastq", "npy"])
 
 if uploaded_file is not None:
-    DataRaw = np.load(uploaded_file, allow_pickle=True)
-    Datadict = DataRaw[()]
-    DataDf = pd.DataFrame.from_dict(Datadict)
+    if uploaded_file.name.endswith(".npy"):
+        DataRaw = np.load(uploaded_file, allow_pickle=True)
+        Datadict = DataRaw[()]
+        DataDf = pd.DataFrame.from_dict(Datadict)
+    else:
+        sequences = []
+        labels = []
+        for record in SeqIO.parse(uploaded_file, "fasta"):
+            sequences.append(str(record.seq))
+            labels.append(1 if "resistant" in record.description.lower() else 0)
+        DataDf = pd.DataFrame({"genes": sequences, "resistant": labels})
+    
     st.write("### Preview of Uploaded Data:")
     st.dataframe(DataDf.head())
 
     # Tokenize genomic sequences
     maxlen = 160
-    max_words = 4
-    tokenizer = Tokenizer(num_words=max_words, char_level=True)
+    tokenizer = Tokenizer(char_level=True)
     tokenizer.fit_on_texts(list(DataDf['genes']))
     sequences = tokenizer.texts_to_sequences(list(DataDf['genes']))
     Xpad = pad_sequences(sequences, maxlen=maxlen, padding='post', truncating='post', value=0)
@@ -41,7 +50,7 @@ if uploaded_file is not None:
 
     # Model Architecture
     model = tf.keras.models.Sequential([
-        tf.keras.layers.Embedding(4, 1, input_length=maxlen),
+        tf.keras.layers.Embedding(len(tokenizer.word_index) + 1, 1, input_length=maxlen),
         tf.keras.layers.Conv1D(128, 27, activation='relu'),
         tf.keras.layers.MaxPooling1D(9),
         tf.keras.layers.Dropout(0.5),
