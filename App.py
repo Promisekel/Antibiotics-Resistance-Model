@@ -2,65 +2,103 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from tensorflow.keras.preprocessing.text import Tokenizer
-from tensorflow.keras.preprocessing.sequence import pad_sequences
+from keras.preprocessing.text import Tokenizer
+from keras.preprocessing.sequence import pad_sequences
 import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix, classification_report
-import seaborn as sns
+from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
 
-# Load trained model
-@st.cache_resource
-def load_model():
-    model = tf.keras.models.load_model("antibiotic_resistance_model.h5")
-    return model
+# App title
+st.title("Antibiotic Resistance Prediction")
+st.markdown("## Predict antibiotic resistance from genomic sequences")
 
-model = load_model()
-
-# Title
-st.title("Antibiotic Resistance Prediction from Gene Sequences")
-
-# File uploader for gene sequence data
-uploaded_file = st.file_uploader("Upload a CSV file containing gene sequences", type=["csv"])
+# Upload dataset
+uploaded_file = st.file_uploader("Upload dataset (.npy file)", type=["npy"])
 
 if uploaded_file is not None:
-    data = pd.read_csv(uploaded_file)
-    st.write("Preview of uploaded data:")
-    st.write(data.head())
-    
-    # Ensure the correct column is used
-    sequence_column = st.selectbox("Select the column containing gene sequences", data.columns)
-    sequences = data[sequence_column].astype(str).tolist()
-    
-    # Tokenization and Padding (Assuming same preprocessing as training)
-    tokenizer = Tokenizer()
-    tokenizer.fit_on_texts(sequences)
-    sequences = tokenizer.texts_to_sequences(sequences)
-    sequences = pad_sequences(sequences, maxlen=200)
-    
-    # Predictions
-    predictions = model.predict(sequences)
-    predicted_classes = (predictions > 0.5).astype(int)
-    data["Predicted_Resistance"] = predicted_classes
-    
-    # Display results
-    st.write("Predictions:")
-    st.write(data[[sequence_column, "Predicted_Resistance"]].head())
-    
-    # Confusion Matrix
-    st.subheader("Confusion Matrix")
-    true_labels = st.file_uploader("Upload true labels CSV (if available)", type=["csv"])
-    
-    if true_labels is not None:
-        true_data = pd.read_csv(true_labels)
-        true_classes = true_data["Resistance"].values  # Assuming column name
-        cm = confusion_matrix(true_classes, predicted_classes)
-        
-        plt.figure(figsize=(6,4))
-        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
-        st.pyplot(plt)
-        
-        # Classification Report
-        report = classification_report(true_classes, predicted_classes, output_dict=True)
-        st.write(pd.DataFrame(report).transpose())
+    DataRaw = np.load(uploaded_file, allow_pickle=True)
+    Datadict = DataRaw[()]
+    DataDf = pd.DataFrame.from_dict(Datadict)
+    st.write("### Preview of Uploaded Data:")
+    st.dataframe(DataDf.head())
 
-# Run: Save the model file as "antibiotic_resistance_model.h5" in the app directory.
+    # Tokenize genomic sequences
+    maxlen = 160
+    max_words = 4
+    tokenizer = Tokenizer(num_words=max_words, char_level=True)
+    tokenizer.fit_on_texts(list(DataDf['genes']))
+    sequences = tokenizer.texts_to_sequences(list(DataDf['genes']))
+    Xpad = pad_sequences(sequences, maxlen=maxlen, padding='post', truncating='post', value=0)
+    labels = np.asarray(DataDf['resistant'])
+
+    # Train-Test Split
+    training_samples = int(Xpad.shape[0] * 0.9)
+    indices = np.arange(Xpad.shape[0])
+    np.random.shuffle(indices)
+    Xpad = Xpad[indices]
+    labels = labels[indices]
+    x_train, y_train = Xpad[:training_samples], labels[:training_samples]
+    x_test, y_test = Xpad[training_samples:], labels[training_samples:]
+
+    # Model Architecture
+    model = tf.keras.models.Sequential([
+        tf.keras.layers.Embedding(4, 1, input_length=maxlen),
+        tf.keras.layers.Conv1D(128, 27, activation='relu'),
+        tf.keras.layers.MaxPooling1D(9),
+        tf.keras.layers.Dropout(0.5),
+        tf.keras.layers.Conv1D(128, 9, activation='relu'),
+        tf.keras.layers.Dropout(0.5),
+        tf.keras.layers.Bidirectional(tf.keras.layers.GRU(32, dropout=0.2, recurrent_dropout=0.2)),
+        tf.keras.layers.Dense(1, activation='sigmoid')
+    ])
+    
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    st.write("### Model Summary:")
+    st.text(model.summary())
+
+    # Train model
+    if st.button("Train Model"):
+        history = model.fit(x_train, y_train, epochs=10, batch_size=32, validation_split=0.2)
+        st.success("Model training completed!")
+
+        # Plot learning curves
+        st.write("### Training & Validation Loss")
+        fig, ax = plt.subplots()
+        ax.plot(history.history['loss'], label='Training Loss')
+        ax.plot(history.history['val_loss'], label='Validation Loss')
+        ax.set_xlabel("Epochs")
+        ax.set_ylabel("Loss")
+        ax.legend()
+        st.pyplot(fig)
+
+        st.write("### Training & Validation Accuracy")
+        fig, ax = plt.subplots()
+        ax.plot(history.history['accuracy'], label='Training Accuracy')
+        ax.plot(history.history['val_accuracy'], label='Validation Accuracy')
+        ax.set_xlabel("Epochs")
+        ax.set_ylabel("Accuracy")
+        ax.legend()
+        st.pyplot(fig)
+
+    # Make Predictions
+    if st.button("Predict on Test Data"):
+        predictions = model.predict(x_test)
+        preds_binary = (predictions >= 0.5).astype(int)
+        accuracy = accuracy_score(y_test, preds_binary)
+        precision = precision_score(y_test, preds_binary)
+        recall = recall_score(y_test, preds_binary)
+        f1 = f1_score(y_test, preds_binary)
+        st.write(f"### Model Performance on Test Data")
+        st.write(f"Accuracy: {accuracy:.2f}")
+        st.write(f"Precision: {precision:.2f}")
+        st.write(f"Recall: {recall:.2f}")
+        st.write(f"F1 Score: {f1:.2f}")
+
+        # Confusion Matrix
+        conf_matrix = confusion_matrix(y_test, preds_binary)
+        st.write("### Confusion Matrix")
+        st.write(conf_matrix)
+
+st.markdown("### Hospital Usage Features:")
+st.markdown("- Upload patient genomic data for resistance prediction")
+st.markdown("- View model accuracy and performance metrics")
+st.markdown("- Train and retrain model with updated datasets")
